@@ -1,192 +1,228 @@
-// src/pages/Dashboard.jsx  (or src/Dashboard.jsx)
+// src/views/UserDashboard.jsx
+
 import React, { useEffect, useMemo, useState } from "react";
 import "./Dashboard.css";
 
-const initialCerts = [
-  {
-    id: 1,
-    name: "AWS Solutions Architect – Associate",
-    provider: "AWS",
-    category: "Cloud",
-    issueDate: "2023-05-11",
-    expiryDate: "2026-05-11",
-    reference: "AWS-123456",
-  },
-  {
-    id: 2,
-    name: "Certified Kubernetes Administrator",
-    provider: "CNCF",
-    category: "DevOps",
-    issueDate: "2023-10-05",
-    expiryDate: "2025-10-05",
-    reference: "CKA-9012",
-  },
-  {
-    id: 3,
-    name: "Google Professional Cloud Architect",
-    provider: "Google Cloud",
-    category: "Cloud",
-    issueDate: "2022-03-21",
-    expiryDate: "2025-03-21",
-    reference: "GCP-5678",
-  },
-];
+const API_BASE_URL =
+  import.meta.env.VITE_API_BASE_URL || "http://localhost:4000";
 
-const EXPIRY_WINDOWS = ["All dates", "Next 30 days", "Next 60 days", "Next 90 days"];
+// ---------- Helpers ----------
 
-function daysBetween(today, dateStr) {
-  const d = new Date(dateStr);
-  const t = new Date(
-    today.getFullYear(),
-    today.getMonth(),
-    today.getDate()
-  ).getTime();
-  const target = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
-  return Math.round((target - t) / (1000 * 60 * 60 * 24));
+function computeDaysLeft(expiryDateString) {
+  if (!expiryDateString) return NaN;
+  const today = new Date();
+  const expiry = new Date(expiryDateString);
+  const diffMs = expiry.getTime() - today.setHours(0, 0, 0, 0);
+  return Math.round(diffMs / (1000 * 60 * 60 * 24));
 }
 
-function getStatus(daysLeft) {
+function getStatusFromDaysLeft(daysLeft) {
+  if (Number.isNaN(daysLeft)) return "Unknown";
   if (daysLeft < 0) return "Expired";
   if (daysLeft <= 30) return "Expiring soon";
   return "Active";
 }
 
-function formatDisplayDate(dateStr) {
-  if (!dateStr) return "-";
-  const d = new Date(dateStr);
-  return d.toLocaleDateString("en-GB", {
+function formatDate(dateString) {
+  if (!dateString) return "—";
+  const d = new Date(dateString);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("en-IN", {
     day: "2-digit",
     month: "short",
     year: "numeric",
   });
 }
 
-function Dashboard() {
-  const [certs, setCerts] = useState(() => {
-    const stored = localStorage.getItem("frogtrack_certs");
-    return stored ? JSON.parse(stored) : initialCerts;
-  });
+function escapeIcs(str = "") {
+  return String(str)
+    .replace(/\\/g, "\\\\")
+    .replace(/,/g, "\\,")
+    .replace(/;/g, "\\;")
+    .replace(/\n/g, "\\n");
+}
 
-  const [expiryWindow, setExpiryWindow] = useState("All dates");
-  const [categoryFilter, setCategoryFilter] = useState("All categories");
-  const [statusFilter, setStatusFilter] = useState("All statuses");
+const emptyForm = {
+  name: "",
+  provider: "",
+  category: "",
+  issueDate: "",
+  expiryDate: "",
+  certId: "",
+  certUrl: "",
+  notes: "",
+};
+
+// ---------- Component ----------
+
+export default function UserDashboard() {
+  const [certs, setCerts] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const [expiryWindow, setExpiryWindow] = useState("all");
+  const [statusFilter, setStatusFilter] = useState("all");
+  const [categoryFilter, setCategoryFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const [form, setForm] = useState(emptyForm);
 
-  const [newCert, setNewCert] = useState({
-    name: "",
-    provider: "",
-    category: "Cloud",
-    issueDate: "",
-    expiryDate: "",
-    reference: "",
-  });
-
+  // ---------- Load from API ----------
   useEffect(() => {
-    localStorage.setItem("frogtrack_certs", JSON.stringify(certs));
-  }, [certs]);
+    async function loadCerts() {
+      try {
+        setLoading(true);
+        setError("");
 
-  const today = new Date();
+        const res = await fetch(`${API_BASE_URL}/api/certifications`);
 
-  const decoratedCerts = useMemo(
-    () =>
-      certs.map((cert) => {
-        const daysLeft = cert.expiryDate
-          ? daysBetween(today, cert.expiryDate)
-          : NaN;
-        const status = getStatus(daysLeft);
-        return { ...cert, daysLeft, status };
-      }),
-    [certs, today]
-  );
+        if (!res.ok) {
+          throw new Error(`API error ${res.status}`);
+        }
 
-  const stats = useMemo(() => {
-    const active = decoratedCerts.filter((c) => c.status === "Active").length;
-    const expiringSoon = decoratedCerts.filter(
-      (c) => c.status === "Expiring soon"
-    ).length;
-    const expired = decoratedCerts.filter((c) => c.status === "Expired").length;
-    return { active, expiringSoon, expired };
-  }, [decoratedCerts]);
+        const data = await res.json();
 
-  const earliestUpcoming = useMemo(() => {
-    const upcoming = decoratedCerts
-      .filter((c) => c.daysLeft >= 0)
-      .sort((a, b) => a.daysLeft - b.daysLeft);
-    return upcoming[0] || null;
-  }, [decoratedCerts]);
+        if (!Array.isArray(data)) {
+          throw new Error("API returned non-array payload");
+        }
 
-  const filteredCerts = useMemo(() => {
-    return decoratedCerts.filter((cert) => {
-      // expiry window
-      if (expiryWindow !== "All dates" && !Number.isNaN(cert.daysLeft)) {
-        let max = 30;
-        if (expiryWindow === "Next 60 days") max = 60;
-        if (expiryWindow === "Next 90 days") max = 90;
-        if (cert.daysLeft < 0 || cert.daysLeft > max) return false;
+        const enriched = data.map((c) => {
+          const issueDate = c.issue_date || c.issueDate;
+          const expiryDate = c.expiry_date || c.expiryDate;
+
+          const daysLeft = computeDaysLeft(expiryDate);
+          const status = getStatusFromDaysLeft(daysLeft);
+
+          return {
+            ...c,
+            issueDate,
+            expiryDate,
+            daysLeft,
+            status,
+          };
+        });
+
+        setCerts(enriched);
+      } catch (err) {
+        console.error("Failed to fetch certifications", err);
+        setError(
+          "Could not load certifications from the server. Make sure the API on port 4000 is running and /api/certifications returns JSON."
+        );
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    loadCerts();
+  }, []);
+
+  // ---------- Form handlers ----------
+  function handleFormChange(e) {
+    const { name, value } = e.target;
+    setForm((prev) => ({ ...prev, [name]: value }));
+  }
+
+  async function handleSubmit(e) {
+    e.preventDefault();
+    if (!form.name.trim()) return; // tiny UX guard
+
+    setSaving(true);
+    setError("");
+
+    try {
+      const payload = {
+        ...form,
+        issueDate: form.issueDate,
+        expiryDate: form.expiryDate,
+      };
+
+      const res = await fetch(`${API_BASE_URL}/api/certifications`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+
+      if (!res.ok) {
+        throw new Error(`Save failed (${res.status})`);
       }
 
-      // category
+      const created = await res.json();
+
+      const issueDate = created.issue_date || created.issueDate;
+      const expiryDate = created.expiry_date || created.expiryDate;
+      const daysLeft = computeDaysLeft(expiryDate);
+      const status = getStatusFromDaysLeft(daysLeft);
+
+      const enrichedCreated = {
+        ...created,
+        issueDate,
+        expiryDate,
+        daysLeft,
+        status,
+      };
+
+      setCerts((prev) => [...prev, enrichedCreated]);
+      setForm(emptyForm);
+    } catch (err) {
+      console.error("Failed to save certification", err);
+      setError("Could not save this certification. Check the server logs.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  // ---------- Stats ----------
+  const stats = useMemo(() => {
+    let active = 0,
+      expiring = 0,
+      expired = 0;
+    for (const c of certs) {
+      if (c.status === "Expired") expired++;
+      else if (c.status === "Expiring soon") expiring++;
+      else active++;
+    }
+    return { active, expiring, expired };
+  }, [certs]);
+
+  // ---------- Filters ----------
+  const filteredCerts = useMemo(() => {
+    return certs.filter((c) => {
+      if (typeof c.daysLeft === "number") {
+        if (expiryWindow === "30" && !(c.daysLeft >= 0 && c.daysLeft <= 30))
+          return false;
+        if (expiryWindow === "60" && !(c.daysLeft >= 0 && c.daysLeft <= 60))
+          return false;
+        if (expiryWindow === "90" && !(c.daysLeft >= 0 && c.daysLeft <= 90))
+          return false;
+      }
+
+      if (statusFilter === "active" && c.status !== "Active") return false;
+      if (statusFilter === "expiring" && c.status !== "Expiring soon")
+        return false;
+      if (statusFilter === "expired" && c.status !== "Expired") return false;
+
       if (
-        categoryFilter !== "All categories" &&
-        cert.category !== categoryFilter
+        categoryFilter !== "all" &&
+        c.category?.toLowerCase() !== categoryFilter
       ) {
         return false;
       }
 
-      // status
-      if (statusFilter !== "All statuses" && cert.status !== statusFilter) {
-        return false;
-      }
-
-      // search
       if (search.trim()) {
         const q = search.toLowerCase();
-        const haystack = `${cert.name} ${cert.provider} ${cert.reference}`.toLowerCase();
+        const haystack = `${c.name} ${c.provider} ${c.category} ${
+          c.certId || c.cert_id || ""
+        }`.toLowerCase();
         if (!haystack.includes(q)) return false;
       }
 
       return true;
     });
-  }, [decoratedCerts, expiryWindow, categoryFilter, statusFilter, search]);
+  }, [certs, expiryWindow, statusFilter, categoryFilter, search]);
 
-  const categories = useMemo(() => {
-    const set = new Set(certs.map((c) => c.category));
-    return ["All categories", ...Array.from(set)];
-  }, [certs]);
-
-  const statusOptions = ["All statuses", "Active", "Expiring soon", "Expired"];
-
-  function handleNewCertChange(e) {
-    const { name, value } = e.target;
-    setNewCert((prev) => ({ ...prev, [name]: value }));
-  }
-
-  function handleAddCertification(e) {
-    e.preventDefault();
-    if (!newCert.name || !newCert.provider || !newCert.expiryDate) {
-      alert("Please fill at least name, provider, and expiry date.");
-      return;
-    }
-    const newItem = {
-      ...newCert,
-      id: Date.now(),
-    };
-    setCerts((prev) => [newItem, ...prev]);
-    setNewCert({
-      name: "",
-      provider: "",
-      category: "Cloud",
-      issueDate: "",
-      expiryDate: "",
-      reference: "",
-    });
-  }
-
+  // ---------- Exports ----------
   function handleExportCsv() {
-    if (!filteredCerts.length) {
-      alert("No certifications in the current view to export.");
-      return;
-    }
+    if (!filteredCerts.length) return;
+
     const header = [
       "Name",
       "Provider",
@@ -195,412 +231,438 @@ function Dashboard() {
       "Expiry date",
       "Status",
       "Days left",
-      "Reference",
+      "Cert ID",
+      "URL",
     ];
+
     const rows = filteredCerts.map((c) => [
-      `"${c.name}"`,
-      `"${c.provider}"`,
-      `"${c.category}"`,
-      `"${formatDisplayDate(c.issueDate)}"`,
-      `"${formatDisplayDate(c.expiryDate)}"`,
-      `"${c.status}"`,
-      `"${Number.isNaN(c.daysLeft) ? "" : c.daysLeft}"`,
-      `"${c.reference || ""}"`,
+      c.name,
+      c.provider,
+      c.category,
+      formatDate(c.issueDate),
+      formatDate(c.expiryDate),
+      c.status,
+      c.daysLeft,
+      c.certId || c.cert_id,
+      c.certUrl || c.cert_url,
     ]);
-    const csv = [header.join(","), ...rows.map((r) => r.join(","))].join("\r\n");
-    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+
+    const csv = [header, ...rows]
+      .map((row) =>
+        row
+          .map((field) =>
+            `"${String(field ?? "").replace(/"/g, '""').replace(/\n/g, " ")}"`
+          )
+          .join(",")
+      )
+      .join("\r\n");
+
+    const blob = new Blob([csv], {
+      type: "text/csv;charset=utf-8;",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = "frogtrack-certifications.csv";
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }
 
   function handleExportCalendar() {
-    const eligible = filteredCerts.filter(
-      (c) => c.expiryDate && c.daysLeft >= 0
-    );
-    if (!eligible.length) {
-      alert("No upcoming expiries in this view to export.");
-      return;
-    }
-
-    const now = new Date();
-    const pad = (n) => String(n).padStart(2, "0");
-    const dtStamp = `${now.getUTCFullYear()}${pad(
-      now.getUTCMonth() + 1
-    )}${pad(now.getUTCDate())}T${pad(now.getUTCHours())}${pad(
-      now.getUTCMinutes()
-    )}${pad(now.getUTCSeconds())}Z`;
+    if (!filteredCerts.length) return;
 
     const lines = [
       "BEGIN:VCALENDAR",
       "VERSION:2.0",
-      "PRODID:-//FrogTrack//EN",
-      "CALSCALE:GREGORIAN",
-      "METHOD:PUBLISH",
+      "PRODID:-//FrogTrack//Renewals//EN",
     ];
 
-    eligible.forEach((cert) => {
-      const d = new Date(cert.expiryDate);
-      const dt = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(
-        d.getDate()
-      )}`;
+    filteredCerts.forEach((c) => {
+      const exp = new Date(c.expiryDate);
+      if (Number.isNaN(exp.getTime())) return;
+      if (c.daysLeft < 0) return;
 
-      const summary = `Renew ${cert.name}`;
-      const description = [
-        `Provider: ${cert.provider}`,
-        `Category: ${cert.category}`,
-        cert.reference ? `Reference: ${cert.reference}` : "",
-        "",
-        "Generated by FrogTrack",
-      ]
-        .filter(Boolean)
-        .join("\\n");
+      const dt = exp.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+      const uid = `frogtrack-${c.id || c.certId || Math.random()
+        .toString(36)
+        .slice(2)}@frogtrack`;
 
-      lines.push("BEGIN:VEVENT");
-      lines.push(`UID:${cert.id}@frogtrack`);
-      lines.push(`DTSTAMP:${dtStamp}`);
-      lines.push(`DTSTART;VALUE=DATE:${dt}`);
-      lines.push(`SUMMARY:${summary}`);
-      lines.push(`DESCRIPTION:${description}`);
-      lines.push("END:VEVENT");
+      lines.push(
+        "BEGIN:VEVENT",
+        `UID:${uid}`,
+        `DTSTAMP:${dt}`,
+        `DTSTART:${dt}`,
+        `SUMMARY:${escapeIcs(`Renew ${c.name}`)}`,
+        `DESCRIPTION:${escapeIcs(
+          `Provider: ${c.provider || ""}\\nCategory: ${
+            c.category || ""
+          }\\nCert ID: ${c.certId || c.cert_id || ""}`
+        )}`,
+        "END:VEVENT"
+      );
     });
 
     lines.push("END:VCALENDAR");
 
-    const ics = lines.join("\r\n");
-    const blob = new Blob([ics], { type: "text/calendar;charset=utf-8;" });
+    const blob = new Blob([lines.join("\r\n")], {
+      type: "text/calendar;charset=utf-8;",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = "frogtrack-renewals.ics";
+    document.body.appendChild(a);
     a.click();
+    document.body.removeChild(a);
     URL.revokeObjectURL(url);
   }
 
+  // ---------- UI ----------
   return (
-    <main className="ft-dashboard-page">
-      {/* HERO */}
-      <section className="ft-dashboard-hero">
+    <div className="ft-dashboard-page">
+      <header className="ft-dashboard-header">
         <div className="ft-hero-copy">
-          <p className="ft-eyebrow">User dashboard</p>
-          <h1 className="ft-hero-title">Track every certification in one clean view.</h1>
-          <p className="ft-hero-subtitle">
-            Filter by category, status, or expiry window, then export the exact slice you
-            care about to CSV or a renewal calendar.
-          </p>
-
-          <div className="ft-pill-row">
-            <button
-              className={`ft-pill ${
-                statusFilter === "All statuses" ? "ft-pill-active" : ""
-              }`}
-              onClick={() => setStatusFilter("All statuses")}
-            >
-              All&nbsp;
-              <span className="ft-pill-count">{decoratedCerts.length}</span>
-            </button>
-            <button
-              className={`ft-pill ${statusFilter === "Active" ? "ft-pill-active" : ""}`}
-              onClick={() => setStatusFilter("Active")}
-            >
-              Active&nbsp;<span className="ft-pill-count">{stats.active}</span>
-            </button>
-            <button
-              className={`ft-pill ${
-                statusFilter === "Expiring soon" ? "ft-pill-active" : ""
-              }`}
-              onClick={() => setStatusFilter("Expiring soon")}
-            >
-              Expiring ≤ 30 days&nbsp;
-              <span className="ft-pill-count">{stats.expiringSoon}</span>
-            </button>
-            <button
-              className={`ft-pill ${
-                statusFilter === "Expired" ? "ft-pill-active" : ""
-              }`}
-              onClick={() => setStatusFilter("Expired")}
-            >
-              Expired&nbsp;<span className="ft-pill-count">{stats.expired}</span>
-            </button>
-          </div>
-        </div>
-
-        <aside className="ft-hero-card">
-          <p className="ft-hero-card-label">Today&apos;s snapshot</p>
-          <div className="ft-hero-metrics">
-            <div className="ft-hero-metric">
-              <span className="ft-hero-metric-label">Active</span>
-              <span className="ft-hero-metric-value">{stats.active}</span>
-            </div>
-            <div className="ft-hero-metric">
-              <span className="ft-hero-metric-label">Expiring ≤ 30 days</span>
-              <span className="ft-hero-metric-value">{stats.expiringSoon}</span>
-            </div>
-            <div className="ft-hero-metric">
-              <span className="ft-hero-metric-label">Expired</span>
-              <span className="ft-hero-metric-value">{stats.expired}</span>
-            </div>
-          </div>
-          <p className="ft-hero-footnote">
-            {earliestUpcoming ? (
-              <>
-                Next renewal: <strong>{earliestUpcoming.name}</strong> in{" "}
-                <strong>{earliestUpcoming.daysLeft} days</strong>.
-              </>
-            ) : (
-              "No upcoming renewals yet. You’re all clear."
-            )}
-          </p>
-        </aside>
-      </section>
-
-      {/* ACTIONS */}
-      <section className="ft-dashboard-actions">
-        <div>
-          <h2 className="ft-section-title">My certifications</h2>
-          <p className="ft-section-subtitle">
-            Filters, CSV, and calendar exports always respect your current view.
+          <p className="ft-kicker">CERTIFICATION CONTROL, MINUS THE SPREADSHEETS.</p>
+          <h1 className="ft-page-title">User dashboard</h1>
+          <p className="ft-page-subtitle">
+            Track all your certifications in one place. Filters, CSV, and calendar
+            exports always respect your current view.
           </p>
         </div>
-        <div className="ft-action-buttons">
-          <button className="ft-btn ft-btn-ghost" onClick={handleExportCsv}>
-            Export CSV
+
+        <div className="ft-stat-row" aria-label="Certification summary stats">
+          <button
+            type="button"
+            className={`ft-stat-pill ${
+              statusFilter === "all" ? "ft-stat-pill--active" : ""
+            }`}
+            onClick={() => setStatusFilter("all")}
+          >
+            <span className="ft-pill-label">Active</span>
+            <span className="ft-pill-value">{stats.active}</span>
           </button>
-          <button className="ft-btn ft-btn-solid" onClick={handleExportCalendar}>
-            Export calendar (.ics)
+
+          <button
+            type="button"
+            className={`ft-stat-pill ${
+              statusFilter === "expiring" ? "ft-stat-pill--active" : ""
+            }`}
+            onClick={() => setStatusFilter("expiring")}
+          >
+            <span className="ft-pill-label">Expiring ≤ 30 days</span>
+            <span className="ft-pill-value">{stats.expiring}</span>
+          </button>
+
+          <button
+            type="button"
+            className={`ft-stat-pill ${
+              statusFilter === "expired" ? "ft-stat-pill--active" : ""
+            }`}
+            onClick={() => setStatusFilter("expired")}
+          >
+            <span className="ft-pill-label">Expired</span>
+            <span className="ft-pill-value">{stats.expired}</span>
           </button>
         </div>
-      </section>
+      </header>
 
-      {/* FILTER BAR */}
-      <section className="ft-filter-bar">
-        <div className="ft-filter-group">
-          <span className="ft-filter-label">Expiry window</span>
-          <div className="ft-filter-pills">
-            {EXPIRY_WINDOWS.map((label) => (
+      <div className="ft-dashboard-toolbar">
+        <div className="ft-pill-group">
+          <span className="ft-pill-label-small">Expiry window</span>
+          <div className="ft-pill-options">
+            {[
+              { id: "all", label: "All dates" },
+              { id: "30", label: "Next 30 days" },
+              { id: "60", label: "Next 60 days" },
+              { id: "90", label: "Next 90 days" },
+            ].map((opt) => (
               <button
-                key={label}
-                className={`ft-mini-pill ${
-                  expiryWindow === label ? "ft-mini-pill-active" : ""
+                key={opt.id}
+                type="button"
+                className={`ft-chip ${
+                  expiryWindow === opt.id ? "ft-chip--active" : ""
                 }`}
-                onClick={() => setExpiryWindow(label)}
+                onClick={() => setExpiryWindow(opt.id)}
               >
-                {label}
+                {opt.label}
               </button>
             ))}
           </div>
         </div>
 
-        <div className="ft-filter-group">
-          <label className="ft-filter-label">
-            Category
-            <select
-              className="ft-select"
-              value={categoryFilter}
-              onChange={(e) => setCategoryFilter(e.target.value)}
-            >
-              {categories.map((cat) => (
-                <option key={cat}>{cat}</option>
-              ))}
-            </select>
-          </label>
+        <div className="ft-toolbar-right">
+          <button
+            type="button"
+            className="ft-secondary-button"
+            onClick={handleExportCsv}
+            disabled={!filteredCerts.length}
+          >
+            Export CSV
+          </button>
+          <button
+            type="button"
+            className="ft-primary-button"
+            onClick={handleExportCalendar}
+            disabled={!filteredCerts.length}
+          >
+            Export calendar (.ics)
+          </button>
         </div>
+      </div>
 
-        <div className="ft-filter-group">
-          <label className="ft-filter-label">
-            Status
-            <select
-              className="ft-select"
-              value={statusFilter}
-              onChange={(e) => setStatusFilter(e.target.value)}
-            >
-              {statusOptions.map((st) => (
-                <option key={st}>{st}</option>
-              ))}
-            </select>
-          </label>
-        </div>
+      {error && <div className="ft-alert">{error}</div>}
 
-        <div className="ft-filter-group ft-filter-search">
-          <label className="ft-filter-label">
-            Search
-            <input
-              className="ft-input"
-              type="text"
-              placeholder="Name, provider, or ID"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-            />
-          </label>
-        </div>
-      </section>
+      <div className="ft-dashboard-grid">
+        {/* LEFT: table */}
+        <section className="ft-card">
+          <div className="ft-card-header">
+            <h2 className="ft-card-title">My certifications</h2>
+            <p className="ft-card-subtitle">
+              Use filters or search to slice your portfolio. Exports use this
+              exact slice.
+            </p>
+          </div>
 
-      {/* GRID: TABLE + FORM */}
-      <section className="ft-dashboard-grid">
-        <div className="ft-table-card">
-          <table className="ft-table">
-            <thead>
-              <tr>
-                <th>Certification</th>
-                <th>Provider</th>
-                <th>Category</th>
-                <th>Issue date</th>
-                <th>Expiry date</th>
-                <th>Days left</th>
-                <th>Status</th>
-                <th>Reference</th>
-              </tr>
-            </thead>
-            <tbody>
-              {filteredCerts.length === 0 ? (
-                <tr>
-                  <td colSpan={8} className="ft-table-empty">
-                    No certifications match this view. Try widening the filters.
-                  </td>
-                </tr>
-              ) : (
-                filteredCerts.map((cert) => (
-                  <tr key={cert.id}>
-                    <td>{cert.name}</td>
-                    <td>{cert.provider}</td>
-                    <td>{cert.category}</td>
-                    <td>{formatDisplayDate(cert.issueDate)}</td>
-                    <td>{formatDisplayDate(cert.expiryDate)}</td>
-                    <td>
-                      {Number.isNaN(cert.daysLeft)
-                        ? "-"
-                        : cert.daysLeft === 0
-                        ? "Today"
-                        : cert.daysLeft}
-                    </td>
-                    <td>
-                      <span
-                        className={`ft-status-pill ${
-                          cert.status === "Active"
-                            ? "ft-status-active"
-                            : cert.status === "Expiring soon"
-                            ? "ft-status-soon"
-                            : "ft-status-expired"
-                        }`}
-                      >
-                        {cert.status}
-                      </span>
-                    </td>
-                    <td>{cert.reference || "-"}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
-
-          <p className="ft-tip">
-            Tip: slice by expiry window or status, then export CSV or calendar for just
-            that segment of your portfolio.
-          </p>
-        </div>
-
-        <aside className="ft-form-card">
-          <h3 className="ft-form-title">Add certification</h3>
-          <p className="ft-form-subtitle">
-            Quickly drop a new certification into your portfolio. Everything stays in
-            your browser for now.
-          </p>
-
-          <form className="ft-form" onSubmit={handleAddCertification}>
-            <label className="ft-field">
-              <span>Certification name</span>
-              <input
-                type="text"
-                name="name"
-                value={newCert.name}
-                onChange={handleNewCertChange}
-                placeholder="e.g., AWS Solutions Architect – Professional"
-                className="ft-input"
-              />
-            </label>
-
-            <label className="ft-field">
-              <span>Issuing organisation</span>
-              <input
-                type="text"
-                name="provider"
-                value={newCert.provider}
-                onChange={handleNewCertChange}
-                placeholder="e.g., AWS, Microsoft, Google Cloud"
-                className="ft-input"
-              />
-            </label>
-
-            <label className="ft-field">
-              <span>Category</span>
+          <div className="ft-filter-row">
+            <div className="ft-filter">
+              <label className="ft-filter-label">Category</label>
               <select
-                name="category"
-                value={newCert.category}
-                onChange={handleNewCertChange}
                 className="ft-select"
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
               >
-                <option>Cloud</option>
-                <option>DevOps</option>
-                <option>Programming</option>
-                <option>Security</option>
-                <option>Management</option>
-                <option>Data</option>
-                <option>Other</option>
+                <option value="all">All categories</option>
+                <option value="cloud">Cloud</option>
+                <option value="devops">DevOps</option>
+                <option value="security">Security</option>
+                <option value="data">Data</option>
               </select>
-            </label>
-
-            <div className="ft-field-row">
-              <label className="ft-field">
-                <span>Issue date</span>
-                <input
-                  type="date"
-                  name="issueDate"
-                  value={newCert.issueDate}
-                  onChange={handleNewCertChange}
-                  className="ft-input"
-                />
-              </label>
-              <label className="ft-field">
-                <span>Expiry date</span>
-                <input
-                  type="date"
-                  name="expiryDate"
-                  value={newCert.expiryDate}
-                  onChange={handleNewCertChange}
-                  className="ft-input"
-                  required
-                />
-              </label>
             </div>
 
-            <label className="ft-field">
-              <span>Certificate ID / reference</span>
+            <div className="ft-filter">
+              <label className="ft-filter-label">Status</label>
+              <select
+                className="ft-select"
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value)}
+              >
+                <option value="all">All statuses</option>
+                <option value="active">Active</option>
+                <option value="expiring">Expiring soon</option>
+                <option value="expired">Expired</option>
+              </select>
+            </div>
+
+            <div className="ft-filter ft-filter--grow">
+              <label className="ft-filter-label">Search</label>
               <input
                 type="text"
-                name="reference"
-                value={newCert.reference}
-                onChange={handleNewCertChange}
-                placeholder="e.g., 1234-ABCD"
                 className="ft-input"
+                placeholder="Name, provider, or ID"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
               />
-            </label>
+            </div>
+          </div>
 
-            <button type="submit" className="ft-btn ft-btn-solid ft-btn-full">
-              Save certification
-            </button>
-          </form>
+          <div className="ft-table-wrapper">
+            <table className="ft-table">
+              <thead>
+                <tr>
+                  <th>Certification</th>
+                  <th>Provider</th>
+                  <th>Category</th>
+                  <th>Issue date</th>
+                  <th>Expiry date</th>
+                  <th>Days left</th>
+                  <th>Status</th>
+                  <th>Reference</th>
+                </tr>
+              </thead>
+              <tbody>
+                {loading ? (
+                  <tr>
+                    <td colSpan={8} className="ft-table-empty">
+                      Loading certifications…
+                    </td>
+                  </tr>
+                ) : filteredCerts.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="ft-table-empty">
+                      No certifications match these filters yet.
+                    </td>
+                  </tr>
+                ) : (
+                  filteredCerts.map((c) => (
+                    <tr key={c.id}>
+                      <td>
+                        <div className="ft-cert-name">{c.name}</div>
+                        {(c.certUrl || c.cert_url) && (
+                          <div className="ft-cert-subtext">
+                            {c.certUrl || c.cert_url}
+                          </div>
+                        )}
+                      </td>
+                      <td>{c.provider}</td>
+                      <td>{c.category}</td>
+                      <td>{formatDate(c.issueDate)}</td>
+                      <td>{formatDate(c.expiryDate)}</td>
+                      <td className={c.daysLeft < 0 ? "ft-text-danger" : ""}>
+                        {Number.isNaN(c.daysLeft) ? "—" : c.daysLeft}
+                      </td>
+                      <td>
+                        <span
+                          className={`ft-status-pill ${
+                            c.status === "Expired"
+                              ? "ft-status-pill--expired"
+                              : c.status === "Expiring soon"
+                              ? "ft-status-pill--warning"
+                              : "ft-status-pill--active"
+                          }`}
+                        >
+                          {c.status}
+                        </span>
+                      </td>
+                      <td>{c.certId || c.cert_id}</td>
+                    </tr>
+                  ))
+                )}
+              </tbody>
+            </table>
+          </div>
 
-          <p className="ft-form-footnote">
-            Future version: sync this with a backend (MySQL + API) so you can log in
-            from anywhere.
+          <p className="ft-footnote">
+            Tip: tweak the filters, then export CSV or calendar for just that
+            slice of your portfolio.
           </p>
-        </aside>
-      </section>
-    </main>
+        </section>
+
+        {/* RIGHT: add form */}
+        <section className="ft-card ft-card--side">
+          <h2 className="ft-card-title">Add certification</h2>
+          <p className="ft-card-subtitle">
+            New entries are saved straight into Postgres through the FrogTrack
+            API.
+          </p>
+
+          <form className="ft-form" onSubmit={handleSubmit}>
+            <div className="ft-field">
+              <label className="ft-field-label">Certification name</label>
+              <input
+                name="name"
+                type="text"
+                className="ft-input"
+                placeholder="e.g., AWS Solutions Architect – Associate"
+                value={form.name}
+                onChange={handleFormChange}
+                required
+              />
+            </div>
+
+            <div className="ft-field">
+              <label className="ft-field-label">Issuing organisation</label>
+              <input
+                name="provider"
+                type="text"
+                className="ft-input"
+                placeholder="e.g., AWS, Microsoft"
+                value={form.provider}
+                onChange={handleFormChange}
+                required
+              />
+            </div>
+
+            <div className="ft-field">
+              <label className="ft-field-label">Category</label>
+              <input
+                name="category"
+                type="text"
+                className="ft-input"
+                placeholder="e.g., Cloud, DevOps, Security"
+                value={form.category}
+                onChange={handleFormChange}
+              />
+            </div>
+
+            <div className="ft-field-row">
+              <div className="ft-field">
+                <label className="ft-field-label">Issue date</label>
+                <input
+                  name="issueDate"
+                  type="date"
+                  className="ft-input"
+                  value={form.issueDate}
+                  onChange={handleFormChange}
+                  required
+                />
+              </div>
+              <div className="ft-field">
+                <label className="ft-field-label">Expiry date</label>
+                <input
+                  name="expiryDate"
+                  type="date"
+                  className="ft-input"
+                  value={form.expiryDate}
+                  onChange={handleFormChange}
+                  required
+                />
+              </div>
+            </div>
+
+            <div className="ft-field-row">
+              <div className="ft-field">
+                <label className="ft-field-label">Reference / Cert ID</label>
+                <input
+                  name="certId"
+                  type="text"
+                  className="ft-input"
+                  placeholder="e.g., AWS-123456"
+                  value={form.certId}
+                  onChange={handleFormChange}
+                />
+              </div>
+              <div className="ft-field">
+                <label className="ft-field-label">Certificate URL</label>
+                <input
+                  name="certUrl"
+                  type="url"
+                  className="ft-input"
+                  placeholder="Link to badge or certificate"
+                  value={form.certUrl}
+                  onChange={handleFormChange}
+                />
+              </div>
+            </div>
+
+            <div className="ft-field">
+              <label className="ft-field-label">Notes</label>
+              <textarea
+                name="notes"
+                rows={3}
+                className="ft-input ft-input--textarea"
+                placeholder="Optional: exam attempts, renewal conditions, etc."
+                value={form.notes}
+                onChange={handleFormChange}
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="ft-primary-button ft-primary-button--full"
+              disabled={saving}
+            >
+              {saving ? "Saving…" : "Save certification"}
+            </button>
+
+            <p className="ft-footnote">
+              Future version: auto-sync from AWS / Azure / Google APIs so this
+              page updates itself.
+            </p>
+          </form>
+        </section>
+      </div>
+    </div>
   );
 }
-
-export default Dashboard;

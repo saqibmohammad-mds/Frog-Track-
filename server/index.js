@@ -7,11 +7,9 @@ const { Pool } = require("pg");
 const app = express();
 
 // --- Middleware ---
-app.use(
-  cors({
-    origin: "http://localhost:5173", // your Vite dev URL
-  })
-);
+// Allow all origins in dev – simple and safe enough for local use
+app.use(cors());
+
 app.use(express.json());
 
 // --- DB pool ---
@@ -22,6 +20,21 @@ const pool = new Pool({
   user: process.env.PGUSER,
   password: process.env.PGPASSWORD,
 });
+
+// Helper to map DB row -> API shape (camelCase)
+function mapCertRow(row) {
+  return {
+    id: row.id,
+    name: row.name,
+    provider: row.provider,
+    category: row.category,
+    issueDate: row.issue_date,
+    expiryDate: row.expiry_date,
+    certId: row.cert_id,
+    certUrl: row.cert_url,
+    notes: row.notes,
+  };
+}
 
 // --- Health check ---
 app.get("/api/health", async (req, res) => {
@@ -36,21 +49,6 @@ app.get("/api/health", async (req, res) => {
     res.status(500).json({ status: "error", message: err.message });
   }
 });
-
-// Helper: map DB row -> API shape (camelCase)
-function mapCertRow(row) {
-  return {
-    id: row.id,
-    name: row.name,
-    provider: row.provider,
-    category: row.category,
-    issueDate: row.issue_date,
-    expiryDate: row.expiry_date,
-    certId: row.cert_id,
-    certUrl: row.cert_url,
-    notes: row.notes,
-  };
-}
 
 // --- GET all certifications ---
 app.get("/api/certifications", async (req, res) => {
@@ -114,10 +112,6 @@ app.post("/api/certifications", async (req, res) => {
     res.status(500).json({ message: "Failed to create certification" });
   }
 });
-
-// --- (Optional for later) update / delete routes ---
-// app.put("/api/certifications/:id", async (req, res) => { ... });
-// app.delete("/api/certifications/:id", async (req, res) => { ... });
 
 const port = process.env.PORT || 4000;
 
