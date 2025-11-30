@@ -1,0 +1,7 @@
+<!-- public/frog-cursor.svg -->
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">
+  <!-- Neon pointer shape -->
+  <polygon fill="#D7FF5B" points="3,2 13,30 17,19 28,16 3,2" />
+  <!-- Small dark dot just for style -->
+  <circle cx="12" cy="11" r="2" fill="#020309" />
+</svg>
