@@ -30,8 +30,8 @@
 }
 
 .logo {
-  font-weight: 700;
-  font-size: 1.35rem;
+  font-weight: 800;
+  font-size: 2.5rem;
   letter-spacing: 0.08em;
 }
 
@@ -1005,4 +1005,38 @@
   .dashboard-sidebar-card {
     margin-top: 0.5rem;
   }
+}
+
+/* Make hero a positioning context for the frog */
+.hero {
+  position: relative;
+  overflow: hidden; /* frog can't escape the card visually */
+}
+
+/* Floating frog buddy */
+.frogbuddy {
+  position: absolute;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 30% 20%, #d7ff5b, #9bff3a, #141a12);
+  box-shadow: 0 0 32px rgba(215, 255, 91, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none; /* don't block clicks */
+  transform-origin: center bottom;
+  transition:
+    top 0.35s cubic-bezier(0.22, 0.68, 0.33, 1.2),
+    left 0.35s cubic-bezier(0.22, 0.68, 0.33, 1.2),
+    transform 0.28s ease-out;
+}
+
+.frogbuddy--jumping {
+  transform: translateY(-18px) scale(1.06);
+}
+
+.frogbuddy-face {
+  font-size: 1.4rem;
+  filter: drop-shadow(0 0 4px rgba(0, 0, 0, 0.45));
 }

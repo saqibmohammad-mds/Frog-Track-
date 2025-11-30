@@ -1,6 +1,7 @@
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import "./App.css";
 import UserDashboard from "./views/UserDashboard.jsx";
+import AdminDashboard from "./views/AdminDashboard.jsx";
 
 function App() {
   const [activeView, setActiveView] = useState("home");
@@ -51,15 +52,17 @@ function App() {
       )}
 
       {activeView === "dashboard" && <UserDashboard />}
-      {activeView === "admin" && <AdminView />}
+      {activeView === "admin" && <AdminDashboard />}
     </div>
   );
 }
 
 /* HOME HERO */
 function HomeHero({ onOpenDashboard, onOpenAdmin }) {
+  const heroRef = useRef(null);
+
   return (
-    <main className="hero">
+    <main ref={heroRef} className="hero">
       <section className="hero-text">
         <p className="eyebrow">CERTIFICATION CONTROL, MINUS THE SPREADSHEETS.</p>
 
@@ -117,32 +120,76 @@ function HomeHero({ onOpenDashboard, onOpenAdmin }) {
           </p>
         </div>
       </section>
+
+      {/* Little frog buddy that runs away & hops randomly */}
+      <FrogBuddy containerRef={heroRef} />
     </main>
   );
 }
 
-/* ADMIN VIEW (still simple for now) */
-function AdminView() {
-  return (
-    <main className="view-shell">
-      <div className="view-header">
-        <h1>Admin control</h1>
-        <p>
-          Admins will get a cross-user view of all certifications, with options
-          to verify entries and mark renewals as in-progress or completed.
-        </p>
-      </div>
+/* FROG BUDDY – avoids cursor + random hops */
+function FrogBuddy({ containerRef }) {
+  const [position, setPosition] = useState({ x: 70, y: 35 }); // % inside hero
+  const [isJumping, setIsJumping] = useState(false);
 
-      <div className="view-body">
-        <div className="placeholder-card">
-          <h2>Admin view coming soon</h2>
-          <p>
-            Next, we&apos;ll mirror the dashboard table here but with filters by
-            user, verification status, and renewal progress.
-          </p>
-        </div>
-      </div>
-    </main>
+  // helper: jump to a random spot
+  function jumpRandom() {
+    const newX = 18 + Math.random() * 64; // 18–82% width
+    const newY = 18 + Math.random() * 50; // 18–68% height
+
+    setIsJumping(true);
+    setPosition({ x: newX, y: newY });
+
+    setTimeout(() => {
+      setIsJumping(false);
+    }, 420);
+  }
+
+  // 1) Run away from cursor when too close
+  useEffect(() => {
+    function handleMove(e) {
+      const container = containerRef.current;
+      if (!container) return;
+
+      const rect = container.getBoundingClientRect();
+
+      const frogX = rect.left + (position.x / 100) * rect.width;
+      const frogY = rect.top + (position.y / 100) * rect.height;
+
+      const dx = e.clientX - frogX;
+      const dy = e.clientY - frogY;
+      const distance = Math.sqrt(dx * dx + dy * dy);
+
+      if (distance < 130 && !isJumping) {
+        jumpRandom();
+      }
+    }
+
+    window.addEventListener("mousemove", handleMove);
+    return () => window.removeEventListener("mousemove", handleMove);
+  }, [containerRef, position, isJumping]);
+
+  // 2) Random hop every few seconds
+  useEffect(() => {
+    const interval = setInterval(() => {
+      if (!isJumping) {
+        jumpRandom();
+      }
+    }, 4000);
+
+    return () => clearInterval(interval);
+  }, [isJumping]);
+
+  return (
+    <div
+      className={`frogbuddy ${isJumping ? "frogbuddy--jumping" : ""}`}
+      style={{
+        left: `${position.x}%`,
+        top: `${position.y}%`,
+      }}
+    >
+      <span className="frogbuddy-face">🐸</span>
+    </div>
   );
 }
 
